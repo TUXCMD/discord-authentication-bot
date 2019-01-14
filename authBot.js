@@ -1,17 +1,13 @@
 //      Discord Auth Bot
 //          Made By
-//     Twitter: @washedjs
-//     Discord: Jimm¥#9999
-
+//     Discord: Jimm¥#4444
 
 const Discord = require("discord.js");
 const fs = require('fs');
 const sql = require("sqlite");
-const moment = require("moment");
 const schedule = require("node-schedule");
 const colors = require("colors");
 const client = new Discord.Client();
-var embed = new Discord.RichEmbed();
 
 //Reading from config file
 fs.readFile('./config.json', function read(err, data) {
@@ -20,7 +16,7 @@ fs.readFile('./config.json', function read(err, data) {
         process.exit(1);
     }
     try {
-        let config = JSON.parse(data);
+        var config = JSON.parse(data);
         init(config);
     } catch (e) {
         console.log(e);
@@ -32,13 +28,13 @@ fs.readFile('./config.json', function read(err, data) {
 function init(config){
 client.login(config.botKey)
 setupDb()
-checkToken()
+checkToken(config)
 
 client.on('ready', () => {
     console.log(colors.grey(`Logged in as ${client.user.tag}`));
     client.user.setPresence({
         'game':{
-            'name': 'Messing with authentication',
+            'name': 'Authenticating...',
             'type': 'Playing'
         }
     })
@@ -54,13 +50,14 @@ client.on('message', async message => {
     const command = args.shift().toLowerCase();
 
     if (message.author.bot) return;
+    
     //Command Ping
     if (command == 'ping'){
         message.channel.send(client.ping)
     }
     
     //Command Activate
-    if (command == 'activate' && message.channel.type == 'dm'){
+    if (command == 'auth' && message.channel.type == 'dm'){
         
         if (message.content.split(' ').length == 2){
             
@@ -73,14 +70,13 @@ client.on('message', async message => {
                 if ((tokens.indexOf(token)) > -1)  {
 
                     tmp = await message.author.send('**Verifying...**')
-
-                    let startDate = moment().format('LLL'); 
-                    let endDate = moment().add(30, 'days').format('LLL');
+                    let startDate = Date.now()
+                    let endDate = startDate + (30 * 24 * 60 * 60 * 1000)
 
                     await sql.get('SELECT * FROM users WHERE token = ?', [token]).then(row => {
                         if (!row) {
                             try {
-                                sql.run("INSERT INTO users (userId, token, startDate, endDate) VALUES (?, ?, ?, ?)", [message.author.id, token, startDate, endDate]);
+                                sql.run("INSERT INTO users (userTag, userId, token, startDate, endDate) VALUES (?, ?, ?, ?, ?)", [message.author.tag, message.author.id, token, startDate, endDate]);
                                 
                                 var role = client.guilds.get(config.serverId).roles.find(role => role.name === config.roleName);
                                 client.guilds.get(config.serverId).members.get(message.author.id).addRole(role); 
@@ -102,8 +98,8 @@ client.on('message', async message => {
                 }
             });
         }
-    } else if (command != 'activate' && message.channel.type == 'dm') {
-        message.author.send('**In order to activate your account type the following:** _!activate YOURTOKEN_')
+    } else if (command != 'auth' && message.channel.type == 'dm') {
+        message.author.send('**In order to activate your account type the following:** !auth _YOURTOKEN_')
     } else {
         return
     }
@@ -113,39 +109,29 @@ client.on('message', async message => {
 async function setupDb(){
     try {
         await sql.open("./users.sqlite", { Promise });
-        await sql.run("CREATE TABLE IF NOT EXISTS users (userId TEXT, token TEXT UNIQUE, startDate TEXT, endDate TEXT)");
-        
+        await sql.run("CREATE TABLE IF NOT EXISTS users (userTag TEXT, userId TEXT, token TEXT UNIQUE, startDate TIMESTAMP, endDate TIMESTAMP)");
     } catch (error) {
         console.log(error)
     }
 }
 
-// TO DO NOT WORKING ATM
-async function checkToken(){
-    schedule.scheduleJob({hour: 20, minute: 06}, async () => {
-        token = []
+async function checkToken(config){
+    schedule.scheduleJob({hour: 00, minute: 00, second: 00}, async () => {
+        await sql.all('SELECT userTag, userId, token, endDate FROM users').then(function(res) { result=res });
 
-        //token.push(sql.get('SELECT token FROM users'))
-        
-        //console.log(token)
-        await sql.get('SELECT token, endDate FROM users').then(function(res) { token = res });
-        //token = token.split(' ')[1]
-        console.log(token)
-        await sql.get('SELECT endDate FROM users WHERE token = ?', [token]).then(function (err, dates) {
-            if (err) throw err;
-
-            console.log(dates);
-
-            if (dates <  moment().format('LLL')) {
-                console.log("token scaduto")
+        result.forEach(element => {
+            if (Date.now() > element.endDate){
+                var role = client.guilds.get(config.serverId).roles.find(role => role.name === config.roleName);
+                client.guilds.get(config.serverId).members.get(element.userId).removeRole(role);
+                sql.run('DELETE FROM users WHERE token = ?', element.token)
+                
+                var data = fs.readFileSync('./tokens.txt', 'utf-8').split("\n");
+                var arrayIndex = data.indexOf(element.token)
+                data.splice(arrayIndex, 1)
+                fs.writeFile("./tokens.txt", data.join("\n"), {encoding : 'utf-8'}, (error) => {if (error) throw error;})
+                
+                console.log(colors.cyan("Token Exipired: " + element.token + " - User: " + element.userTag + " - UserID: " + element.userId))
             }
+        });
         })
-        
-    })
-
-                //var role = client.guilds.get(config.serverId).roles.find(role => role.name === config.roleName);
-                //client.guilds.get(config.serverId).members.get(message.author.id).removeRole(role);
-            //}
-        //})           
-    //});
-}
+    }
